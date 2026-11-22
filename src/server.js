@@ -9,7 +9,7 @@ import {
   makeLimiter, originAllowed,
 } from './security.js';
 
-export const VERSION = '1.0.1';
+export const VERSION = '1.1.0';
 const COOKIE = 'ogs_session';
 const SESSION_MS = 30 * 24 * 3600 * 1000;
 const MAX_SAVE_BYTES = 200 * 1024;
