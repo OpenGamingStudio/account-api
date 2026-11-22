@@ -68,3 +68,10 @@ export function originAllowed(origin, extra = []) {
   } catch { /* origine invalide */ }
   return false;
 }
+
+/** Pseudo généré pour un compte créé par Google / Discord : Joueur-XXXXX (alphabet sans ambiguïté). */
+export function randomPseudo() {
+  let s = ''; for (const b of randomBytes(8)) { if (b < 248 && s.length < 5) s += ALPHABET[b % ALPHABET.length]; }
+  while (s.length < 5) s += ALPHABET[randomBytes(1)[0] % ALPHABET.length];
+  return `Joueur-${s}`;
+}

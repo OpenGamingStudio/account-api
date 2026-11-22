@@ -4,14 +4,18 @@ import { fileURLToPath } from 'node:url';
 import { join, extname, normalize } from 'node:path';
 import QRCode from 'qrcode';
 import { openDb } from './db.js';
+import { providersFromEnv, authorizeUrl, exchange, newState, newVerifier } from './oauth.js';
 import {
   newCode, hashCode, newSalt, checkCode, newToken, tokenHash, PSEUDO_RE, pseudoKey, GAME_RE,
-  makeLimiter, originAllowed,
+  makeLimiter, originAllowed, randomPseudo,
 } from './security.js';
 
-export const VERSION = '1.1.0';
+export const VERSION = '1.2.0';
 const COOKIE = 'ogs_session';
-const SESSION_MS = 30 * 24 * 3600 * 1000;
+const SESSION_MS = 365 * 24 * 3600 * 1000; // session longue, renouvelée à chaque usage
+const RENEW_AFTER_MS = 3600 * 1000;
+const OAUTH_COOKIE = 'ogs_oauth';
+const OAUTH_TTL_MS = 10 * 60 * 1000;
 const MAX_SAVE_BYTES = 200 * 1024;
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_GAMES_PER_USER = 40;
@@ -25,13 +29,14 @@ class HttpError extends Error { constructor(status, code, extra = {}) { super(co
  * Crée le serveur. Options : dbFile, cookieDomain, extraOrigins, trustProxy.
  * Aucune donnée personnelle : un pseudo, un code de récupération (stocké haché) et des sauvegardes JSON.
  */
-export function createApp({ dbFile = ':memory:', cookieDomain = '', extraOrigins = [], trustProxy = false, registerLimit = 5 } = {}) {
+export function createApp({ dbFile = ':memory:', cookieDomain = '', extraOrigins = [], trustProxy = false, registerLimit = 5, providers = {}, publicUrl = 'https://api.opengamingstudio.com', fetchImpl = fetch } = {}) {
   const db = openDb(dbFile);
   const q = {
     userByKey: db.prepare('SELECT * FROM users WHERE pseudo_key = ?'),
     insertUser: db.prepare('INSERT INTO users (pseudo, pseudo_key, salt, code_hash, created_at) VALUES (?,?,?,?,?)'),
     insertSession: db.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?,?,?)'),
-    sessionUser: db.prepare('SELECT u.id, u.pseudo FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?'),
+    sessionUser: db.prepare('SELECT u.id, u.pseudo, length(u.code_hash) AS code_len, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?'),
+    renewSession: db.prepare('UPDATE sessions SET expires_at = ? WHERE token_hash = ?'),
     delSession: db.prepare('DELETE FROM sessions WHERE token_hash = ?'),
     purgeSessions: db.prepare('DELETE FROM sessions WHERE expires_at <= ?'),
     getSave: db.prepare('SELECT data, rev, game_version, updated_at FROM saves WHERE user_id = ? AND game = ?'),
@@ -39,6 +44,11 @@ export function createApp({ dbFile = ':memory:', cookieDomain = '', extraOrigins
       ON CONFLICT(user_id, game) DO UPDATE SET data = excluded.data, rev = excluded.rev, game_version = excluded.game_version, updated_at = excluded.updated_at`),
     countSaves: db.prepare('SELECT COUNT(*) AS n FROM saves WHERE user_id = ?'),
     delUser: db.prepare('DELETE FROM users WHERE id = ?'),
+    identity: db.prepare('SELECT user_id FROM identities WHERE provider = ? AND subject = ?'),
+    identitiesOf: db.prepare('SELECT provider FROM identities WHERE user_id = ? ORDER BY provider'),
+    insertIdentity: db.prepare('INSERT INTO identities (provider, subject, user_id, created_at) VALUES (?,?,?,?)'),
+    delIdentity: db.prepare('DELETE FROM identities WHERE user_id = ? AND provider = ?'),
+    setCode: db.prepare('UPDATE users SET salt = ?, code_hash = ? WHERE id = ?'),
   };
   const loginIp = makeLimiter(10, 15 * 60 * 1000);
   const loginUser = makeLimiter(8, 15 * 60 * 1000);
@@ -54,12 +64,54 @@ export function createApp({ dbFile = ':memory:', cookieDomain = '', extraOrigins
   };
   const cookieOf = (req) => { for (const p of String(req.headers.cookie ?? '').split(';')) { const [k, ...v] = p.trim().split('='); if (k === COOKIE) return v.join('='); } return ''; };
   const sessionCookie = (token, maxAgeS) => `${COOKIE}=${token}; Path=/; Max-Age=${maxAgeS}; HttpOnly; Secure; SameSite=Lax${cookieDomain ? `; Domain=${cookieDomain}` : ''}`;
-  const authUser = (req) => { const t = cookieOf(req); return t ? q.sessionUser.get(tokenHash(t), Date.now()) : undefined; };
+  const addCookie = (res, c) => { const cur = res.getHeader('Set-Cookie'); res.setHeader('Set-Cookie', cur ? [].concat(cur, c) : c); };
+  /** Session glissante : à chaque usage (au plus une écriture par heure), l'échéance et le cookie repartent pour 365 jours. */
+  const authUser = (req, res) => {
+    const t = cookieOf(req); if (!t) return undefined;
+    const h = tokenHash(t), now = Date.now();
+    const u = q.sessionUser.get(h, now);
+    if (u && res && u.expires_at - now < SESSION_MS - RENEW_AFTER_MS) {
+      q.renewSession.run(now + SESSION_MS, h);
+      addCookie(res, sessionCookie(t, SESSION_MS / 1000));
+    }
+    return u;
+  };
   const startSession = (res, userId) => {
     q.purgeSessions.run(Date.now());
     const token = newToken();
     q.insertSession.run(tokenHash(token), userId, Date.now() + SESSION_MS);
-    res.setHeader('Set-Cookie', sessionCookie(token, SESSION_MS / 1000));
+    addCookie(res, sessionCookie(token, SESSION_MS / 1000));
+  };
+  const enabled = () => Object.keys(providers);
+  const methodsOf = (u) => ({ pseudo: u.pseudo, hasCode: u.code_len > 0, identities: q.identitiesOf.all(u.id).map((r) => r.provider), providers: enabled() });
+  const authIp = makeLimiter(40, 15 * 60 * 1000);
+  const oauthStates = new Map();
+  const redirectUri = (name) => `${publicUrl}/auth/${name}/callback`;
+  /** Adresse de retour : uniquement une page d'un jeu du studio (jamais une adresse libre : pas de redirection ouverte). */
+  const safeReturn = (v) => {
+    try { const u = new URL(String(v ?? '')); if (originAllowed(u.origin, extraOrigins)) return u; } catch { /* invalide */ }
+    return new URL('https://opengamingstudio.com/');
+  };
+  const backTo = (res, ret, result, error) => {
+    const u = new URL(ret); u.searchParams.set('ogs_auth', result); if (error) u.searchParams.set('ogs_error', error);
+    res.writeHead(302, { Location: u.toString(), 'Cache-Control': 'no-store' }); res.end();
+  };
+  const oauthCookie = (v, maxAge) => `${OAUTH_COOKIE}=${v}; Path=/auth; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=Lax`;
+  const newUserFromProvider = (name, subject, hint) => {
+    // Pseudo affiché : le pseudo Discord s'il est valide et libre, sinon un pseudo généré (jamais le nom réel Google).
+    let pseudo = name === 'discord' ? String(hint).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 20) : '';
+    if (!PSEUDO_RE.test(pseudo) || q.userByKey.get(pseudoKey(pseudo))) pseudo = '';
+    const tx = db.transaction(() => {
+      for (let i = 0; i < 20; i++) {
+        const p = pseudo || randomPseudo();
+        if (q.userByKey.get(pseudoKey(p))) { pseudo = ''; continue; }
+        const id = q.insertUser.run(p, pseudoKey(p), Buffer.alloc(0), Buffer.alloc(0), Date.now()).lastInsertRowid;
+        q.insertIdentity.run(name, subject, id, Date.now());
+        return id;
+      }
+      throw new Error('pseudo');
+    });
+    return tx();
   };
 
   async function readJson(req) {
@@ -68,13 +120,20 @@ export function createApp({ dbFile = ':memory:', cookieDomain = '', extraOrigins
     for await (const c of req) { n += c.length; if (n > MAX_BODY_BYTES) throw new HttpError(413, 'trop_gros'); chunks.push(c); }
     try { const v = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); if (!v || typeof v !== 'object' || Array.isArray(v)) throw 0; return v; } catch { throw new HttpError(400, 'json_invalide'); }
   }
+  const qrOf = (pseudo, code) => {
+    const qr = QRCode.create(`${pseudo} ${code}`, { errorCorrectionLevel: 'M' }).modules;
+    const rows = []; for (let y = 0; y < qr.size; y++) { let r = ''; for (let x = 0; x < qr.size; x++) r += qr.get(x, y) ? '1' : '0'; rows.push(r); }
+    return { size: qr.size, rows };
+  };
   const saveOut = (r) => ({ data: JSON.parse(r.data), rev: r.rev, gameVersion: r.game_version, updatedAt: r.updated_at });
 
   async function route(req, res, url, origin) {
     const m = req.method; const p = url.pathname;
+    const om = /^\/auth\/(google|discord)\/(start|callback)$/.exec(p);
     const send = (status, body) => { const s = JSON.stringify(body); res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(s) }); res.end(s); };
 
     if (p === '/health') return send(200, { ok: true, version: VERSION });
+    if (om && m === 'GET') return oauth(req, res, url, om[1], om[2]);
     if (!p.startsWith('/v1/')) throw new HttpError(404, 'introuvable');
     if (m !== 'GET' && origin && !originAllowed(origin, extraOrigins)) throw new HttpError(403, 'origine_refusee');
     const ip = clientIp(req);
@@ -90,9 +149,7 @@ export function createApp({ dbFile = ':memory:', cookieDomain = '', extraOrigins
       try { id = q.insertUser.run(pseudo, pseudoKey(pseudo), salt, hashCode(code, salt), Date.now()).lastInsertRowid; }
       catch { throw new HttpError(409, 'pseudo_pris'); }
       startSession(res, id);
-      const qr = QRCode.create(`${pseudo} ${code}`, { errorCorrectionLevel: 'M' }).modules;
-      const rows = []; for (let y = 0; y < qr.size; y++) { let r = ''; for (let x = 0; x < qr.size; x++) r += qr.get(x, y) ? '1' : '0'; rows.push(r); }
-      return send(201, { pseudo, code, qr: { size: qr.size, rows } });
+      return send(201, { pseudo, code, qr: qrOf(pseudo, code) });
     }
 
     if (p === '/v1/login' && m === 'POST') {
@@ -102,26 +159,44 @@ export function createApp({ dbFile = ':memory:', cookieDomain = '', extraOrigins
       if (loginIp.blocked(ip)) throw new HttpError(429, 'trop_de_tentatives', { retryAfter: loginIp.retryAfter(ip) });
       if (loginUser.blocked(key)) throw new HttpError(429, 'trop_de_tentatives', { retryAfter: loginUser.retryAfter(key) });
       const u = q.userByKey.get(key);
-      const ok = u ? checkCode(code, u.salt, u.code_hash) : (checkCode(code, dummySalt, dummyHash), false);
+      const ok = u && u.code_hash.length ? checkCode(code, u.salt, u.code_hash) : (checkCode(code, dummySalt, dummyHash), false);
       if (!ok) { loginIp.add(ip); loginUser.add(key); throw new HttpError(401, 'identifiants_invalides'); }
       loginUser.clear(key);
       startSession(res, u.id);
       return send(200, { pseudo: u.pseudo });
     }
 
-    const user = authUser(req);
+    if (p === '/v1/providers' && m === 'GET') return send(200, { providers: enabled() });
+    const user = authUser(req, res);
     if (p === '/v1/logout' && m === 'POST') {
       const t = cookieOf(req); if (t) q.delSession.run(tokenHash(t));
       res.setHeader('Set-Cookie', sessionCookie('', 0));
       return send(200, { ok: true });
     }
-    if (p === '/v1/me' && m === 'GET') return user ? send(200, { pseudo: user.pseudo }) : send(401, { error: 'non_connecte' });
+    if (p === '/v1/me' && m === 'GET') return user ? send(200, methodsOf(user)) : send(401, { error: 'non_connecte' });
     if (!user) throw new HttpError(401, 'non_connecte');
 
     if (p === '/v1/me' && m === 'DELETE') {
       q.delUser.run(user.id);
       res.setHeader('Set-Cookie', sessionCookie('', 0));
       return send(200, { ok: true });
+    }
+
+    if (p === '/v1/me/code' && m === 'POST') {
+      // Crée (compte Google / Discord) ou remplace (nouveau code) le code de récupération : la méthode « pseudo + code ».
+      if (writeUser.blocked(user.id)) throw new HttpError(429, 'trop_de_requetes', { retryAfter: writeUser.retryAfter(user.id) });
+      writeUser.add(user.id);
+      const code = newCode(); const salt = newSalt();
+      q.setCode.run(salt, hashCode(code, salt), user.id);
+      return send(200, { pseudo: user.pseudo, code, qr: qrOf(user.pseudo, code), again: user.code_len > 0 });
+    }
+    const im = /^\/v1\/me\/identities\/(google|discord)$/.exec(p);
+    if (im && m === 'DELETE') {
+      const n = q.identitiesOf.all(user.id).length;
+      if (!q.identitiesOf.all(user.id).some((r) => r.provider === im[1])) throw new HttpError(404, 'non_lie');
+      if (n + (user.code_len > 0 ? 1 : 0) <= 1) throw new HttpError(400, 'derniere_methode');
+      q.delIdentity.run(user.id, im[1]);
+      return send(200, methodsOf(authUser(req)));
     }
 
     const sm = /^\/v1\/saves\/([^/]+)$/.exec(p);
@@ -148,6 +223,56 @@ export function createApp({ dbFile = ':memory:', cookieDomain = '', extraOrigins
       }
     }
     throw new HttpError(404, 'introuvable');
+  }
+
+  /** /auth/<fournisseur>/start : redirige vers le fournisseur ; /auth/<fournisseur>/callback : redirection fixe, ouvre ou lie le compte. */
+  async function oauth(req, res, url, name, step) {
+    const cfg = providers[name];
+    if (!cfg) throw new HttpError(404, 'fournisseur_indisponible');
+    const ip = clientIp(req);
+    if (authIp.blocked(ip)) throw new HttpError(429, 'trop_de_tentatives', { retryAfter: authIp.retryAfter(ip) });
+    authIp.add(ip);
+    const now = Date.now();
+    if (step === 'start') {
+      const ret = safeReturn(url.searchParams.get('return')).toString();
+      let linkUser = 0;
+      if (url.searchParams.get('link') === '1') {
+        const cur = authUser(req, res);
+        if (!cur) return backTo(res, ret, 'erreur', 'non_connecte');
+        linkUser = cur.id;
+      }
+      for (const [k, v] of oauthStates) if (v.exp < now) oauthStates.delete(k);
+      if (oauthStates.size > 5000) throw new HttpError(429, 'trop_de_tentatives');
+      const state = newState(), verifier = newVerifier(), nonce = newState();
+      oauthStates.set(state, { name, verifier, nonce, ret, linkUser, exp: now + OAUTH_TTL_MS });
+      addCookie(res, oauthCookie(state, OAUTH_TTL_MS / 1000));
+      res.writeHead(302, { Location: authorizeUrl(name, cfg, { redirectUri: redirectUri(name), state, verifier, nonce }), 'Cache-Control': 'no-store' });
+      return res.end();
+    }
+    // callback : le state est à usage unique et lié à ce navigateur (cookie), sinon on refuse sans rediriger.
+    const state = String(url.searchParams.get('state') ?? '');
+    const st = oauthStates.get(state); oauthStates.delete(state);
+    const cookieState = (() => { for (const p of String(req.headers.cookie ?? '').split(';')) { const [k, ...v] = p.trim().split('='); if (k === OAUTH_COOKIE) return v.join('='); } return ''; })();
+    addCookie(res, oauthCookie('', 0));
+    if (!st || st.name !== name || st.exp < now || cookieState !== state) throw new HttpError(400, 'etat_invalide');
+    const code = url.searchParams.get('code');
+    if (url.searchParams.get('error') || !code) return backTo(res, st.ret, 'erreur', 'refuse');
+    let idn;
+    try { idn = await exchange(cfg, { code, redirectUri: redirectUri(name), verifier: st.verifier, nonce: st.nonce }, fetchImpl); }
+    catch (e) { console.error('oauth', name, e?.message); return backTo(res, st.ret, 'erreur', 'echec_fournisseur'); }
+    const known = q.identity.get(name, idn.subject);
+    if (st.linkUser) {
+      const cur = authUser(req, res);
+      if (!cur || cur.id !== st.linkUser) return backTo(res, st.ret, 'erreur', 'non_connecte');
+      if (known && known.user_id !== cur.id) return backTo(res, st.ret, 'erreur', 'deja_lie');
+      if (!known) q.insertIdentity.run(name, idn.subject, cur.id, now);
+      return backTo(res, st.ret, 'lie');
+    }
+    let uid;
+    try { uid = known ? known.user_id : newUserFromProvider(name, idn.subject, idn.hint); }
+    catch (e) { console.error('oauth', e?.message); return backTo(res, st.ret, 'erreur', 'echec_fournisseur'); }
+    startSession(res, uid);
+    return backTo(res, st.ret, 'ok');
   }
 
   async function serveStatic(res, p) {
@@ -177,7 +302,7 @@ export function createApp({ dbFile = ':memory:', cookieDomain = '', extraOrigins
         res.writeHead(204, { 'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Max-Age': '600' });
         return res.end();
       }
-      if (req.method === 'GET' && !url.pathname.startsWith('/v1/') && url.pathname !== '/health') return await serveStatic(res, url.pathname);
+      if (req.method === 'GET' && !url.pathname.startsWith('/v1/') && !url.pathname.startsWith('/auth/') && url.pathname !== '/health') return await serveStatic(res, url.pathname);
       await route(req, res, url, origin);
     } catch (e) {
       const status = e instanceof HttpError ? e.status : 500;
@@ -198,6 +323,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     dbFile: process.env.DB_FILE || '/data/account.db',
     cookieDomain: process.env.COOKIE_DOMAIN ?? '.opengamingstudio.com',
     extraOrigins: (process.env.EXTRA_ORIGINS || '').split(',').filter(Boolean),
+    providers: providersFromEnv(),
+    publicUrl: process.env.PUBLIC_URL || 'https://api.opengamingstudio.com',
     trustProxy: process.env.TRUST_PROXY !== '0',
   });
   const port = Number(process.env.PORT || 80);

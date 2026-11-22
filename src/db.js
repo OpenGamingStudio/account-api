@@ -22,6 +22,14 @@ export function openDb(file) {
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       expires_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS identities (
+      provider TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (provider, subject)
+    );
+    CREATE INDEX IF NOT EXISTS identities_user ON identities(user_id);
     CREATE TABLE IF NOT EXISTS saves (
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       game TEXT NOT NULL,

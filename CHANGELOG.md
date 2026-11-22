@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0
+- Connexion Google (OpenID Connect) et Discord (OAuth 2.0) : code + PKCE + state, redirection fixe `/auth/<fournisseur>/callback`. Seul l'identifiant fournisseur est gardé. Boutons masqués sans clés (variables d'environnement).
+- Menu « Compte » : lier ou retirer Google / Discord, créer ou renouveler le code de récupération.
+- Session de 365 jours, renouvelée à chaque usage, cookie multidomaine.
+- `account.js` : sauvegarde automatique 10 s après la dernière modification (et à la fermeture), plus de bouton « Synchroniser », contrat `getSave` / `applySave`.
+
 ## 1.1.0
 - `OGSAccount.show(false|true)` : le jeu cache le bouton compte sur les écrans où il gênerait (la synchronisation continue).
 
