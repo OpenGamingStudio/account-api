@@ -1,0 +1,23 @@
+{
+  "name": "account-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Compte sans e-mail et sauvegarde par joueur et par jeu pour les jeux d'OpenGamingStudio.",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "build:css": "tailwindcss -i src/styles.css -o public/styles.css --minify",
+    "test": "node --test tests/"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.1.0",
+    "tailwindcss": "^4.1.0"
+  },
+  "engines": { "node": ">=18" }
+}
