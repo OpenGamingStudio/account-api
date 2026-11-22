@@ -1,5 +1,5 @@
 /*!
- * account.js 1.0.0 - compte et sauvegarde multi-jeux d'OpenGamingStudio (MIT).
+ * account.js 1.0.1 - compte et sauvegarde multi-jeux d'OpenGamingStudio (MIT).
  * Sans dépendance, à copier tel quel dans chaque jeu. Le jeu reste utilisable sans compte.
  *
  *   OGSAccount.init({
@@ -135,7 +135,7 @@
     'button.k{min-height:48px;border:3px solid #1b1b2f;border-radius:14px;background:#fff;color:#1b1b2f;font-size:17px;font-weight:600;padding:8px 14px;cursor:pointer;touch-action:manipulation}',
     'button.k.on,button.k.main{background:var(--c)}button.k:hover{background:var(--c)}button.k:disabled{opacity:.45;cursor:not-allowed}',
     'button.k.danger{background:#fff;border-color:#e63946;color:#b0202d}',
-    '.col{display:flex;flex-direction:column;gap:10px}.p>button.k,.col>button.k{width:100%}',
+    '.mt{margin-top:12px}.col{display:flex;flex-direction:column;gap:10px}.p>button.k,.col>button.k{width:100%}',
     'label{display:block;font-weight:600;margin-bottom:4px}',
     'input[type=text],input[type=password]{width:100%;min-height:48px;border:3px solid #1b1b2f;border-radius:14px;padding:8px 12px;font-size:18px;background:#fff;color:#1b1b2f}',
     '.err{background:#ffe3e5;border:3px solid #e63946;border-radius:12px;padding:8px 12px;margin-bottom:12px;font-weight:600}',
@@ -227,10 +227,10 @@
       p.appendChild(el('h2', { text: 'Compte créé : ' + c.pseudo }));
       p.appendChild(el('p', { text: 'Voici ton code de récupération. Il ne s’affiche qu’une seule fois : note-le ou copie-le. Sans lui, impossible de te reconnecter.' }));
       p.appendChild(el('div', { class: 'code', text: c.code }));
-      var row = el('div', { class: 'col', style: 'margin-top:10px' });
+      var row = el('div', { class: 'col mt' });
       row.appendChild(el('button', { class: 'k main', type: 'button', onclick: function () { copyText(c.code, function () { fields.copied = true; renderPanel(); }); } }, fields.copied ? 'Code copié' : 'Copier le code'));
       p.appendChild(row);
-      p.appendChild(el('p', { class: 's', style: 'margin-top:12px', text: 'Pour jouer sur un autre appareil, scanne ce QR code avec ton téléphone : il contient ton pseudo et ton code.' }));
+      p.appendChild(el('p', { class: 's mt', text: 'Pour jouer sur un autre appareil, scanne ce QR code avec ton téléphone : il contient ton pseudo et ton code.' }));
       p.appendChild(drawQr(c.qr));
       var ck = el('input', { type: 'checkbox', id: 'ack' }); ck.checked = fields.ack;
       var go = el('button', { class: 'k main', type: 'button', onclick: function () { view = 'account'; fields.created = null; fields.ack = false; renderPanel(); } }, 'Continuer');
@@ -281,7 +281,9 @@
     var host = el('div'); host.setAttribute('data-ogs-account', '');
     var sh = host.attachShadow ? host.attachShadow({ mode: 'open' }) : host;
     root = el('div'); root.style.setProperty('--c', cfg.color || '#FFB703');
-    sh.appendChild(el('style', { text: CSS })); sh.appendChild(root);
+    try { var sheet = new CSSStyleSheet(); sheet.replaceSync(CSS); sh.adoptedStyleSheets = [sheet]; }
+    catch (e) { sh.appendChild(el('style', { text: CSS })); } // anciens navigateurs
+    sh.appendChild(root);
     dot = el('span', { class: 'd' });
     btn = el('button', { class: 'b', type: 'button', onclick: function () { openPanel(); } }, iconUser(), dot);
     root.appendChild(btn); place(); paint();
@@ -290,7 +292,7 @@
   }
 
   window.OGSAccount = {
-    version: '1.0.0',
+    version: '1.0.1',
     init: function (c) {
       if (cfg) return;
       if (!c || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(c.game || '') || typeof c.getState !== 'function' || typeof c.setState !== 'function') return;

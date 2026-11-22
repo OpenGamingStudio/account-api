@@ -9,7 +9,7 @@ import {
   makeLimiter, originAllowed,
 } from './security.js';
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.0.1';
 const COOKIE = 'ogs_session';
 const SESSION_MS = 30 * 24 * 3600 * 1000;
 const MAX_SAVE_BYTES = 200 * 1024;
@@ -164,7 +164,7 @@ export function createApp({ dbFile = ':memory:', cookieDomain = '', extraOrigins
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
     res.setHeader('Vary', 'Origin');
     if (origin && originAllowed(origin, extraOrigins)) {
       res.setHeader('Access-Control-Allow-Origin', origin);
