@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compte OpenGamingStudio</title>
+<meta name="description" content="Un seul compte, sans e-mail, pour sauvegarder ta progression dans tous les jeux d'OpenGamingStudio.">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body class="bg-paper text-ink font-sans min-h-screen">
+<main class="mx-auto max-w-3xl px-4 py-8 sm:py-14">
+  <p class="inline-block bg-ink text-paper rounded-full px-4 py-1 text-base font-semibold">OpenGamingStudio</p>
+  <h1 class="mt-4 text-5xl sm:text-7xl font-bold leading-none">Un compte, tous les jeux.</h1>
+  <p class="mt-5 text-xl max-w-xl">Pas d’e-mail, pas de nom réel : un pseudo et un code secret suffisent pour retrouver ta progression sur ton téléphone, ta tablette ou ton ordinateur.</p>
+
+  <section class="mt-10 grid gap-4 sm:grid-cols-3">
+    <div class="bg-sun border-4 border-ink rounded-3xl p-5"><p class="text-4xl font-bold">1</p><p class="mt-2 text-lg font-semibold">Choisis un pseudo</p></div>
+    <div class="bg-mint border-4 border-ink rounded-3xl p-5"><p class="text-4xl font-bold">2</p><p class="mt-2 text-lg font-semibold">Note ton code (il s’affiche une seule fois)</p></div>
+    <div class="bg-sky border-4 border-ink rounded-3xl p-5"><p class="text-4xl font-bold">3</p><p class="mt-2 text-lg font-semibold">Joue : tout se sauvegarde tout seul</p></div>
+  </section>
+
+  <section class="mt-10 bg-white border-4 border-ink rounded-3xl p-5 sm:p-7">
+    <h2 class="text-3xl font-bold">Essaie ici</h2>
+    <p class="mt-2 text-lg">Le bouton rond en haut à droite ouvre le compte. Ce petit compteur se sauvegarde comme un vrai jeu.</p>
+    <div class="mt-5 flex flex-wrap items-center gap-4">
+      <p class="text-6xl font-bold min-w-24" id="n" aria-live="polite">0</p>
+      <button id="plus" type="button" class="min-h-12 min-w-12 px-6 bg-sun border-4 border-ink rounded-2xl text-xl font-bold cursor-pointer hover:bg-ink hover:text-sun">+1</button>
+      <button id="zero" type="button" class="min-h-12 px-6 bg-white border-4 border-ink rounded-2xl text-xl font-semibold cursor-pointer hover:bg-sky">Remettre à zéro</button>
+    </div>
+  </section>
+
+  <footer class="mt-10 text-base">
+    <p>Tes données : un pseudo, un code gardé sous forme chiffrée, et les sauvegardes de tes jeux. Rien d’autre. Tu peux supprimer ton compte quand tu veux.</p>
+    <p class="mt-2">Code ouvert (MIT) : <a class="underline font-semibold" href="https://github.com/OpenGamingStudio/account-api">github.com/OpenGamingStudio/account-api</a> · version <span id="v">1.0.0</span></p>
+  </footer>
+</main>
+<script src="/account.js"></script>
+<script src="/demo.js"></script>
+</body>
+</html>
