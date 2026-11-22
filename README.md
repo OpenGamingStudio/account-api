@@ -41,7 +41,7 @@ OGSAccount.init({
 });
 ```
 
-Le jeu reste utilisable sans compte. Connecté, la synchronisation est automatique ; en cas de conflit, le joueur choisit la sauvegarde à garder.
+`OGSAccount.show(false|true)` cache ou montre le bouton selon l'écran. Le jeu reste utilisable sans compte. Connecté, la synchronisation est automatique ; en cas de conflit, le joueur choisit la sauvegarde à garder.
 
 ## Développement
 

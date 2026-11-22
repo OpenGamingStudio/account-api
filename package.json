@@ -1,6 +1,6 @@
 {
   "name": "account-api",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "private": true,
   "description": "Compte sans e-mail et sauvegarde par joueur et par jeu pour les jeux d'OpenGamingStudio.",
   "license": "MIT",

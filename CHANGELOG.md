@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.1.0
+- `OGSAccount.show(false|true)` : le jeu cache le bouton compte sur les écrans où il gênerait (la synchronisation continue).
+
 ## 1.0.1
 - `account.js` compatible avec une CSP stricte (`style-src 'self'`) : feuille de style construite (adoptedStyleSheets), plus aucun attribut `style` en ligne.
 

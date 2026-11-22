@@ -6,7 +6,7 @@
   document.getElementById('zero').addEventListener('click', function () { set(0); });
   show();
   window.OGSAccount.init({
-    game: 'demo', version: '1.0.1', apiBase: location.origin,
+    game: 'demo', version: '1.1.0', apiBase: location.origin,
     getState: function () { return { count: n }; },
     setState: function (s) { set(Math.max(0, Math.floor(Number(s && s.count) || 0))); },
     isEmpty: function (s) { return !s || !s.count; },

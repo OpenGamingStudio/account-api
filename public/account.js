@@ -17,7 +17,7 @@
 (function () {
   'use strict';
   var API = 'https://api.opengamingstudio.com';
-  var cfg, user = null, pending = null, root, btn, dot, panel, lastHash = '', pushTimer = 0, busy = false, status = { kind: 'anon' }, retryAt = 0;
+  var wanted = true, cfg, user = null, pending = null, root, btn, dot, panel, lastHash = '', pushTimer = 0, busy = false, status = { kind: 'anon' }, retryAt = 0;
 
   // ---- utilitaires ----
   function hash(o) { var s = JSON.stringify(o), h = 5381; for (var i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0; return h + ':' + s.length; }
@@ -286,7 +286,7 @@
     sh.appendChild(root);
     dot = el('span', { class: 'd' });
     btn = el('button', { class: 'b', type: 'button', onclick: function () { openPanel(); } }, iconUser(), dot);
-    root.appendChild(btn); place(); paint();
+    root.appendChild(btn); place(); paint(); if (!wanted) btn.style.display = 'none';
     document.body.appendChild(host);
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && panel && canClose()) closePanel(); });
   }
@@ -307,6 +307,8 @@
       if (document.body) start(); else document.addEventListener('DOMContentLoaded', start);
     },
     /** Optionnel : à appeler après un changement important pour sauvegarder sans attendre. */
+    /** Optionnel : cache ou montre le bouton selon l'écran du jeu (la synchronisation continue). */
+    show: function (on) { wanted = on !== false; if (btn) btn.style.display = wanted ? '' : 'none'; if (!wanted && panel && canClose()) closePanel(); },
     notifyChange: function () { if (cfg && user) tick(); },
     sync: sync
   };
